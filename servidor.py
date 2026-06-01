@@ -15,10 +15,16 @@ CODIGO_FIXO = None
 class Cofre:
     def __init__(self) -> None:
         self.fundo_acumulado: float = 0.0
+        self.codigos_por_jogador: dict = {}
         self.lock = threading.Lock()
 
-    def registrar_jogada(self, aposta: int, codigo: int) -> Tuple[float, float, bool, float]:
+    def registrar_jogada(self, nome: str, aposta: int) -> Tuple[float, float, bool, float, int]:
         with self.lock:
+            if nome not in self.codigos_por_jogador:
+                self.codigos_por_jogador[nome] = gerar_codigo()
+            
+            codigo = self.codigos_por_jogador[nome]
+
             fundo_antes = self.fundo_acumulado
             self.fundo_acumulado += VALOR_POR_JOGADA
             fundo_depois = self.fundo_acumulado
@@ -29,8 +35,9 @@ class Cofre:
             if venceu:
                 premio = self.fundo_acumulado * PERCENTUAL_PREMIO
                 self.fundo_acumulado = 0.0
+                del self.codigos_por_jogador[nome]
                 
-            return fundo_antes, fundo_depois, venceu, premio
+            return fundo_antes, fundo_depois, venceu, premio, codigo
 
 cofre_digital = Cofre()
 
@@ -100,9 +107,7 @@ def atender_cliente(conexao: socket.socket, endereco: Tuple[str, int]) -> None:
                     print(f"[{endereco[0]}:{endereco[1]}] {erro}", flush=True)
                     return
 
-                codigo = gerar_codigo()
-
-                fundo_antes, fundo_depois, venceu, premio = cofre_digital.registrar_jogada(aposta, codigo)
+                fundo_antes, fundo_depois, venceu, premio, codigo = cofre_digital.registrar_jogada(nome, aposta)
 
                 if venceu:
                     mensagem = f"Cofre aberto, {nome}! Ganhou {formatar_moeda(premio)}"
