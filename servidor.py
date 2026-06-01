@@ -3,6 +3,7 @@ import json
 import random
 import socket
 import threading
+from typing import Optional, Tuple, Any
 
 HOST_PADRAO = "0.0.0.0"
 PORTA_PADRAO = 5000
@@ -11,24 +12,43 @@ PERCENTUAL_PREMIO = 0.60
 
 CODIGO_FIXO = None
 
-fundo_acumulado = 0.0
-lock_fundo = threading.Lock()
+class Cofre:
+    def __init__(self) -> None:
+        self.fundo_acumulado: float = 0.0
+        self.lock = threading.Lock()
 
-def formatar_moeda(valor):
+    def registrar_jogada(self, aposta: int, codigo: int) -> Tuple[float, float, bool, float]:
+        with self.lock:
+            fundo_antes = self.fundo_acumulado
+            self.fundo_acumulado += VALOR_POR_JOGADA
+            fundo_depois = self.fundo_acumulado
+            
+            venceu = (aposta == codigo)
+            premio = 0.0
+            
+            if venceu:
+                premio = self.fundo_acumulado * PERCENTUAL_PREMIO
+                self.fundo_acumulado = 0.0
+                
+            return fundo_antes, fundo_depois, venceu, premio
+
+cofre_digital = Cofre()
+
+def formatar_moeda(valor: float) -> str:
     return f"R$ {valor:.2f}".replace(".", ",")
 
-def enviar_json(arquivo, dados):
+def enviar_json(arquivo, dados: dict) -> None:
     mensagem = json.dumps(dados, ensure_ascii=False) + "\n"
     arquivo.write(mensagem.encode("utf-8"))
     arquivo.flush()
 
-def receber_json(arquivo):
+def receber_json(arquivo) -> Any:
     linha = arquivo.readline()
     if not linha:
         raise ValueError("nenhum dado recebido")
     return json.loads(linha.decode("utf-8"))
 
-def validar_pedido(dados):
+def validar_pedido(dados: Any) -> Tuple[Optional[str], Optional[int], Optional[str]]:
     if not isinstance(dados, dict):
         return None, None, "Pedido inválido: envie um objeto JSON."
 
@@ -38,17 +58,17 @@ def validar_pedido(dados):
     if not isinstance(nome, str) or not nome.strip():
         return None, None, "Pedido inválido: o nome deve ser um texto não vazio."
 
-    if not isinstance(aposta, int) or not 0 <= aposta <= 999:
+    if type(aposta) is not int or not 0 <= aposta <= 999:
         return None, None, "Pedido inválido: a aposta deve ser um inteiro entre 0 e 999."
 
     return nome.strip(), aposta, None
 
-def gerar_codigo():
+def gerar_codigo() -> int:
     if CODIGO_FIXO is not None:
         return CODIGO_FIXO
     return random.randint(0, 999)
 
-def registrar_log(endereco, nome, aposta, codigo, fundo_antes, fundo_depois, resultado):
+def registrar_log(endereco: Tuple[str, int], nome: str, aposta: int, codigo: int, fundo_antes: float, fundo_depois: float, resultado: str) -> None:
     print(
         f"[{endereco[0]}:{endereco[1]}] "
         f"nome={nome!r} aposta={aposta} sorteado={codigo:03d} "
@@ -57,7 +77,7 @@ def registrar_log(endereco, nome, aposta, codigo, fundo_antes, fundo_depois, res
         flush=True,
     )
 
-def atender_cliente(conexao, endereco):
+def atender_cliente(conexao: socket.socket, endereco: Tuple[str, int]) -> None:
     print(f"Cliente conectado: {endereco[0]}:{endereco[1]}", flush=True)
 
     try:
@@ -75,31 +95,24 @@ def atender_cliente(conexao, endereco):
                     return
 
                 nome, aposta, erro = validar_pedido(dados)
-                if erro:
+                if erro or nome is None or aposta is None:
                     enviar_json(arquivo, {"mensagem": erro})
                     print(f"[{endereco[0]}:{endereco[1]}] {erro}", flush=True)
                     return
 
                 codigo = gerar_codigo()
 
-                global fundo_acumulado
-                with lock_fundo:
-                    fundo_antes = fundo_acumulado
-                    fundo_acumulado += VALOR_POR_JOGADA
+                fundo_antes, fundo_depois, venceu, premio = cofre_digital.registrar_jogada(aposta, codigo)
 
-                    if aposta == codigo:
-                        premio = fundo_acumulado * PERCENTUAL_PREMIO
-                        mensagem = f"Cofre aberto, {nome}! Ganhou {formatar_moeda(premio)}"
-                        fundo_acumulado = 0.0
-                        resultado = "acerto"
-                    else:
-                        mensagem = (
-                            f"Código errado, {nome}. "
-                            f"O cofre tem {formatar_moeda(fundo_acumulado)} acumulados."
-                        )
-                        resultado = "erro"
-
-                    fundo_depois = fundo_acumulado
+                if venceu:
+                    mensagem = f"Cofre aberto, {nome}! Ganhou {formatar_moeda(premio)}"
+                    resultado = "acerto"
+                else:
+                    mensagem = (
+                        f"Código errado, {nome}. "
+                        f"O cofre tem {formatar_moeda(fundo_depois)} acumulados."
+                    )
+                    resultado = "erro"
 
                 enviar_json(arquivo, {"mensagem": mensagem})
                 registrar_log(endereco, nome, aposta, codigo, fundo_antes, fundo_depois, resultado)
@@ -108,7 +121,7 @@ def atender_cliente(conexao, endereco):
     finally:
         print(f"Cliente desconectado: {endereco[0]}:{endereco[1]}", flush=True)
 
-def iniciar_servidor(host, porta):
+def iniciar_servidor(host: str, porta: int) -> None:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as servidor:
         servidor.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         servidor.bind((host, porta))
@@ -116,16 +129,19 @@ def iniciar_servidor(host, porta):
 
         print(f"Servidor escutando em {host}:{porta}", flush=True)
 
-        while True:
-            conexao, endereco = servidor.accept()
-            thread = threading.Thread(
-                target=atender_cliente,
-                args=(conexao, endereco),
-                daemon=True,
-            )
-            thread.start()
+        try:
+            while True:
+                conexao, endereco = servidor.accept()
+                thread = threading.Thread(
+                    target=atender_cliente,
+                    args=(conexao, endereco),
+                    daemon=True,
+                )
+                thread.start()
+        except KeyboardInterrupt:
+            print("\nServidor encerrado pelo usuário (Graceful Shutdown).", flush=True)
 
-def ler_argumentos():
+def ler_argumentos() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Servidor do Jogo do Cofre Digital")
     parser.add_argument("--host", default=HOST_PADRAO, help=f"host do servidor, padrão {HOST_PADRAO}")
     parser.add_argument(

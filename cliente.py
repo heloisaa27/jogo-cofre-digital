@@ -1,29 +1,30 @@
 import argparse
 import json
 import socket
+from typing import Any
 
 HOST_PADRAO = "127.0.0.1"
 PORTA_PADRAO = 5000
 
-def enviar_json(arquivo, dados):
+def enviar_json(arquivo, dados: dict) -> None:
     mensagem = json.dumps(dados, ensure_ascii=False) + "\n"
     arquivo.write(mensagem.encode("utf-8"))
     arquivo.flush()
 
-def receber_json(arquivo):
+def receber_json(arquivo) -> Any:
     linha = arquivo.readline()
     if not linha:
         raise ConnectionError("o servidor encerrou a conexão sem responder")
     return json.loads(linha.decode("utf-8"))
 
-def pedir_nome():
+def pedir_nome() -> str:
     while True:
         nome = input("Nome do jogador: ").strip()
         if nome:
             return nome
         print("Informe um nome não vazio.")
 
-def pedir_aposta():
+def pedir_aposta() -> int:
     while True:
         texto = input("Aposta (inteiro entre 0 e 999): ").strip()
         try:
@@ -37,7 +38,7 @@ def pedir_aposta():
 
         print("A aposta precisa estar entre 0 e 999.")
 
-def jogar(host, porta):
+def jogar(host: str, porta: int) -> None:
     nome = pedir_nome()
     aposta = pedir_aposta()
     pedido = {"nome": nome, "aposta": aposta}
@@ -50,7 +51,7 @@ def jogar(host, porta):
 
     print(resposta.get("mensagem", "Resposta inválida recebida do servidor."))
 
-def ler_argumentos():
+def ler_argumentos() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Cliente do Jogo do Cofre Digital")
     parser.add_argument("--host", default=HOST_PADRAO, help=f"host do servidor, padrão {HOST_PADRAO}")
     parser.add_argument(
@@ -65,6 +66,8 @@ if __name__ == "__main__":
     argumentos = ler_argumentos()
     try:
         jogar(argumentos.host, argumentos.porta)
+    except KeyboardInterrupt:
+        print("\nOperação cancelada pelo usuário.")
     except ConnectionRefusedError:
         print("Não foi possível conectar ao servidor. Verifique se ele está em execução.")
     except OSError as erro:
